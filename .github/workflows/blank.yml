@@ -14,6 +14,7 @@ jobs:
       
   prepare:
     needs: build
+    environment: Release Env
     runs-on: ubuntu-latest
     steps:
       - name: Prepare
