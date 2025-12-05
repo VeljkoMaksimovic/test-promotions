@@ -9,7 +9,19 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       - run: echo "Test"
+      
+  prepare:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare
+        run: echo "Preparing..."
+
+  bulid2:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare
+        run: echo "build..."
