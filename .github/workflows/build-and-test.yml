@@ -1,15 +1,11 @@
 name: Build & Test
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/my-project
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push:
