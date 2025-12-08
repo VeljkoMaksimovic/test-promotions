@@ -1,0 +1,132 @@
+# .github/workflows/release.yml
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: 'Build Run ID to promote (from Build workflow)'
+        required: true
+        type: string
+      release_version:
+        description: 'Release version (e.g., v1.2.3)'
+        required: true
+        type: string
+
+jobs:
+  validate-build:
+    runs-on: ubuntu-latest
+    outputs:
+      image_name: ${{ steps.load.outputs.image_name }}
+      image_tag: ${{ steps.load.outputs.image_tag }}
+      commit_sha: ${{ steps.load.outputs.commit_sha }}
+      branch: ${{ steps.load.outputs.branch }}
+    steps:
+      - name: Verify build run exists and succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Verifying build run ${{ inputs.build_run_id }}..."
+          
+          # Check if run exists and get its conclusion
+          CONCLUSION=$(gh run view ${{ inputs.build_run_id }} \
+            --repo ${{ github.repository }} \
+            --json conclusion \
+            --jq '.conclusion')
+          
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "❌ Error: Build run ${{ inputs.build_run_id }} was not successful (status: $CONCLUSION)"
+            exit 1
+          fi
+          
+          echo "✅ Build run verified as successful"
+      
+      - name: Download build artifacts
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: build.yml
+          run_id: ${{ inputs.build_run_id }}
+          name: build-${{ inputs.build_run_id }}
+          path: build-artifacts/
+      
+      - name: Load build metadata
+        id: load
+        run: |
+          IMAGE_NAME=$(cat build-artifacts/image_name.txt)
+          IMAGE_TAG=$(cat build-artifacts/image_tag.txt)
+          COMMIT_SHA=$(cat build-artifacts/commit_sha.txt)
+          BRANCH=$(cat build-artifacts/branch.txt)
+          
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          
+          echo "### 📦 Build Artifacts Loaded" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Original Build:** [#${{ inputs.build_run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ inputs.build_run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`$IMAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`$COMMIT_SHA\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`$BRANCH\`" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Display test results
+        run: |
+          echo "### ✅ Test Results from Build" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat build-artifacts/test-results.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  release:
+    needs: validate-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ needs.validate-build.outputs.commit_sha }}
+      
+      - name: Re-tag image for release
+        run: |
+          OLD_TAG="${{ needs.validate-build.outputs.image_tag }}"
+          NEW_TAG="myapp:${{ inputs.release_version }}"
+          
+          echo "Re-tagging image:"
+          echo "  From: $OLD_TAG"
+          echo "  To: $NEW_TAG"
+          
+          # Your image retagging commands (docker tag, push, etc.)
+          # docker pull $OLD_TAG
+          # docker tag $OLD_TAG $NEW_TAG
+          # docker push $NEW_TAG
+      
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create ${{ inputs.release_version }} \
+            --title "Release ${{ inputs.release_version }}" \
+            --notes "
+          ## Release Details
+          
+          - **Built from:** [Build Run #${{ inputs.build_run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ inputs.build_run_id }})
+          - **Commit:** ${{ needs.validate-build.outputs.commit_sha }}
+          - **Branch:** ${{ needs.validate-build.outputs.branch }}
+          - **Image:** \`${{ needs.validate-build.outputs.image_name }}\`
+          
+          ## Artifacts
+          - Docker image: \`myapp:${{ inputs.release_version }}\`
+          " \
+            --target ${{ needs.validate-build.outputs.commit_sha }}
+      
+      - name: Deploy to environment
+        run: |
+          echo "Deploying myapp:${{ inputs.release_version }} to ${{ inputs.environment }}"
+          # Your deployment commands here
+      
+      - name: Release summary
+        run: |
+          echo "### 🎉 Release ${{ inputs.release_version }} Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`myapp:${{ inputs.release_version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Original Build:** [Run #${{ inputs.build_run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ inputs.build_run_id }})" >> $GITHUB_STEP_SUMMARY
