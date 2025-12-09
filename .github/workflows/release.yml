@@ -1,0 +1,164 @@
+name: Release Workflow
+
+run-name: "Release: v${{ jobs.prepare.outputs.new-version }} (from run ${{ inputs.build_run_id }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: 'Build and Test workflow run ID'
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    outputs:
+      new-version: ${{ steps.version.outputs.new_version }}
+      branch-name: ${{ steps.version.outputs.branch_name }}
+      commit-sha: ${{ steps.verify.outputs.commit_sha }}
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify build run exists and passed
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🔍 Checking workflow run ${{ inputs.build_run_id }}..."
+          
+          # Get the workflow run details
+          RUN_DATA=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/${{ github.repository }}/actions/runs/${{ inputs.build_run_id }})
+          
+          # Extract status and conclusion
+          STATUS=$(echo "$RUN_DATA" | jq -r '.status')
+          CONCLUSION=$(echo "$RUN_DATA" | jq -r '.conclusion')
+          HEAD_SHA=$(echo "$RUN_DATA" | jq -r '.head_sha')
+          WORKFLOW_NAME=$(echo "$RUN_DATA" | jq -r '.name')
+          
+          echo "Workflow: $WORKFLOW_NAME"
+          echo "Status: $STATUS"
+          echo "Conclusion: $CONCLUSION"
+          echo "Commit SHA: $HEAD_SHA"
+          
+          # Check if run completed successfully
+          if [ "$STATUS" != "completed" ]; then
+            echo "❌ Error: Workflow run is not completed (status: $STATUS)"
+            exit 1
+          fi
+          
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "❌ Error: Workflow run did not succeed (conclusion: $CONCLUSION)"
+            exit 1
+          fi
+          
+          echo "✅ Build run verified successfully"
+          echo "commit_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
+
+      - name: Read and increment version
+        id: version
+        run: |
+          if [ ! -f VERSION ]; then
+            echo "❌ Error: VERSION file not found"
+            exit 1
+          fi
+          
+          CURRENT_VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "Current version: $CURRENT_VERSION"
+          
+          # Parse version (x.y.z)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+          
+          # Increment minor version, reset patch to 0
+          NEW_MINOR=$((MINOR + 1))
+          NEW_VERSION="${MAJOR}.${NEW_MINOR}.0"
+          
+          BRANCH_NAME="rc-v${NEW_VERSION}"
+          
+          echo "New version: $NEW_VERSION"
+          echo "Branch name: $BRANCH_NAME"
+          
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create release branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create and checkout new branch
+          git checkout -b ${{ steps.version.outputs.branch_name }}
+          
+          # Update VERSION file
+          echo "${{ steps.version.outputs.new_version }}" > VERSION
+          
+          # Commit and push
+          git add VERSION
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
+          git push origin ${{ steps.version.outputs.branch_name }}
+          
+          echo "✅ Created branch ${{ steps.version.outputs.branch_name }}"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag and push image
+        run: |
+          # Construct the original image tag from the build run
+          IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          ORIGINAL_TAG="${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}:${{ steps.verify.outputs.commit_sha }}"
+          NEW_TAG="${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}:v${{ steps.version.outputs.new_version }}"
+          
+          echo "📥 Pulling original image..."
+          docker pull $ORIGINAL_TAG
+          
+          echo "🏷️  Retagging image..."
+          docker tag $ORIGINAL_TAG $NEW_TAG
+          
+          echo "📤 Pushing new tag..."
+          docker push $NEW_TAG
+          
+          echo "✅ Successfully retagged and pushed image"
+          echo "  Original: $ORIGINAL_TAG"
+          echo "  New: $NEW_TAG"
+
+      - name: Display summary
+        run: |
+          echo "## 🚀 Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Version Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **New Version**: v${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: \`${{ steps.version.outputs.branch_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source Commit**: \`${{ steps.verify.outputs.commit_sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Run ID**: ${{ inputs.build_run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Run URL**: https://github.com/${{ github.repository }}/actions/runs/${{ inputs.build_run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Container Image" >> $GITHUB_STEP_SUMMARY
+          IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          echo "- **Image**: \`${{ env.REGISTRY }}/${IMAGE_NAME_LOWER}:v${{ steps.version.outputs.new_version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review the release branch: [\`${{ steps.version.outputs.branch_name }}\`](https://github.com/${{ github.repository }}/tree/${{ steps.version.outputs.branch_name }})" >> $GITHUB_STEP_SUMMARY
+          echo "2. Create a Pull Request to merge into main" >> $GITHUB_STEP_SUMMARY
+          echo "3. Tag the release in GitHub" >> $GITHUB_STEP_SUMMARY
