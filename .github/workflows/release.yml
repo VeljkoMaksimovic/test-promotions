@@ -21,6 +21,7 @@ jobs:
       contents: write
       packages: write
       actions: read
+      pull-requests: write
     outputs:
       new-version: ${{ steps.version.outputs.new_version }}
       branch-name: ${{ steps.version.outputs.branch_name }}
@@ -49,12 +50,24 @@ jobs:
           STATUS=$(echo "$RUN_DATA" | jq -r '.status')
           CONCLUSION=$(echo "$RUN_DATA" | jq -r '.conclusion')
           HEAD_SHA=$(echo "$RUN_DATA" | jq -r '.head_sha')
+          HEAD_BRANCH=$(echo "$RUN_DATA" | jq -r '.head_branch')
           WORKFLOW_NAME=$(echo "$RUN_DATA" | jq -r '.name')
           
           echo "Workflow: $WORKFLOW_NAME"
           echo "Status: $STATUS"
           echo "Conclusion: $CONCLUSION"
+          echo "Branch: $HEAD_BRANCH"
           echo "Commit SHA: $HEAD_SHA"
+          
+          # Check if run is from main branch
+          if [ "$HEAD_BRANCH" != "main" ] && [ "$HEAD_BRANCH" != "master" ]; then
+            echo "❌ Error: Build run must be from 'main' or 'master' branch"
+            echo "   Found: '$HEAD_BRANCH'"
+            echo "   This is a security measure to prevent releases from unreviewed branches."
+            exit 1
+          fi
+          
+          echo "✅ Branch check passed: $HEAD_BRANCH"
           
           # Check if run completed successfully
           if [ "$STATUS" != "completed" ]; then
@@ -244,7 +257,7 @@ jobs:
           
           Resource Utilization:
           ┌─────────────────────────────────────┐
-          │ CPU:    ${CPU_USAGE}% ████░░░░░░░░░░░░░░ │
+          │ CPU:    ${CPU_USAGE}% ███░░░░░░░░░░░░░░ │
           │ Memory: ${MEMORY_USAGE}MB ██████░░░░░░░░░░ │
           └─────────────────────────────────────┘
           ```
