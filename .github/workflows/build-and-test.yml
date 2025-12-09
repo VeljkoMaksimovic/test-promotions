@@ -1,11 +1,15 @@
-name: Build & Test
+name: Demo Container Registry Workflow
 
 on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository_owner }}/my-project
 
 jobs:
   build-and-push:
@@ -14,7 +18,7 @@ jobs:
       contents: read
       packages: write
     outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
+      image-tag: ${{ steps.export-tag.outputs.tag }}
     
     steps:
       - name: Checkout repository
@@ -30,20 +34,30 @@ jobs:
       - name: Pull hello-world image
         run: docker pull hello-world:latest
 
-      - name: Convert repository owner to lowercase
-        id: lowercase
-        run: echo "owner=$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-      
       - name: Tag image with commit SHA
+        id: meta
         run: |
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ steps.lowercase.outputs.owner }}/my-project:${{ github.sha }}"
+          # Convert to lowercase for ghcr.io compatibility
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_TAG="${{ env.REGISTRY }}/${OWNER_LOWER}/my-project:${{ github.sha }}"
           echo "tags=$IMAGE_TAG" >> $GITHUB_OUTPUT
           docker tag hello-world:latest $IMAGE_TAG
-          
+          echo "Tagged image as: $IMAGE_TAG"
+
       - name: Push image to registry
         run: |
-          docker push ${{ steps.meta.outputs.tags }}
-          echo "✅ Successfully pushed image"
+          # Convert to lowercase for ghcr.io compatibility
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_TAG="${{ env.REGISTRY }}/${OWNER_LOWER}/my-project:${{ github.sha }}"
+          docker push $IMAGE_TAG
+          echo "✅ Successfully pushed image: $IMAGE_TAG"
+      
+      - name: Export image tag for next job
+        id: export-tag
+        run: |
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_TAG="${{ env.REGISTRY }}/${OWNER_LOWER}/my-project:${{ github.sha }}"
+          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
   test-and-benchmark:
     runs-on: ubuntu-latest
