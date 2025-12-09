@@ -162,3 +162,181 @@ jobs:
           echo "1. Review the release branch: [\`${{ steps.version.outputs.branch_name }}\`](https://github.com/${{ github.repository }}/tree/${{ steps.version.outputs.branch_name }})" >> $GITHUB_STEP_SUMMARY
           echo "2. Create a Pull Request to merge into main" >> $GITHUB_STEP_SUMMARY
           echo "3. Tag the release in GitHub" >> $GITHUB_STEP_SUMMARY
+
+      - name: Download benchmark artifacts from build run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "📥 Downloading benchmark artifacts from run ${{ inputs.build_run_id }}..."
+          
+          # Download artifacts from the specified run
+          gh run download ${{ inputs.build_run_id }} -n benchmark-results -D ./benchmarks
+          
+          if [ -f ./benchmarks/benchmark-results.json ]; then
+            echo "✅ Successfully downloaded benchmark results"
+            cat ./benchmarks/benchmark-results.json | jq '.'
+          else
+            echo "⚠️  Warning: benchmark-results.json not found"
+            echo '{"error": "No benchmark data available"}' > ./benchmarks/benchmark-results.json
+          fi
+
+      - name: Generate release notes with benchmarks
+        id: release_notes
+        run: |
+          # Read benchmark data
+          BENCHMARK_JSON=$(cat ./benchmarks/benchmark-results.json)
+          
+          # Extract key metrics
+          IMAGE_SIZE_MB=$(echo "$BENCHMARK_JSON" | jq -r '.image_info.size_mb // "N/A"')
+          EXEC_TIME=$(echo "$BENCHMARK_JSON" | jq -r '.test_results.execution_time_ms // "N/A"')
+          STARTUP_TIME=$(echo "$BENCHMARK_JSON" | jq -r '.benchmarks.container_startup_time_ms // "N/A"')
+          MEMORY_USAGE=$(echo "$BENCHMARK_JSON" | jq -r '.benchmarks.memory_usage_mb // "N/A"')
+          CPU_USAGE=$(echo "$BENCHMARK_JSON" | jq -r '.benchmarks.cpu_usage_percent // "N/A"')
+          THROUGHPUT=$(echo "$BENCHMARK_JSON" | jq -r '.performance_metrics.throughput_requests_per_second // "N/A"')
+          LATENCY_P50=$(echo "$BENCHMARK_JSON" | jq -r '.performance_metrics.latency_p50_ms // "N/A"')
+          LATENCY_P95=$(echo "$BENCHMARK_JSON" | jq -r '.performance_metrics.latency_p95_ms // "N/A"')
+          LATENCY_P99=$(echo "$BENCHMARK_JSON" | jq -r '.performance_metrics.latency_p99_ms // "N/A"')
+          
+          # Create release notes
+          cat > release-notes.md << 'EOF'
+          ## 🎉 Release v${{ steps.version.outputs.new_version }}
+          
+          ### 📦 Container Image
+          
+          ```
+          docker pull ghcr.io/$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]'):v${{ steps.version.outputs.new_version }}
+          ```
+          
+          ### 📊 Performance Benchmarks
+          
+          #### Image Metrics
+          | Metric | Value |
+          |--------|-------|
+          | **Image Size** | ${IMAGE_SIZE_MB} MB |
+          | **Startup Time** | ${STARTUP_TIME} ms |
+          | **Execution Time** | ${EXEC_TIME} ms |
+          
+          #### Resource Usage
+          | Resource | Usage |
+          |----------|-------|
+          | **Memory** | ${MEMORY_USAGE} MB |
+          | **CPU** | ${CPU_USAGE}% |
+          
+          #### Performance Metrics
+          | Metric | Value |
+          |--------|-------|
+          | **Throughput** | ${THROUGHPUT} req/s |
+          | **Latency (p50)** | ${LATENCY_P50} ms |
+          | **Latency (p95)** | ${LATENCY_P95} ms |
+          | **Latency (p99)** | ${LATENCY_P99} ms |
+          
+          ### 📈 Benchmark Visualization
+          
+          ```
+          Performance Overview:
+          ┌─────────────────────────────────────┐
+          │ Latency Distribution                │
+          ├─────────────────────────────────────┤
+          │ p50: ${LATENCY_P50}ms ████░░░░░░░░░░░░░░░ │
+          │ p95: ${LATENCY_P95}ms ████████░░░░░░░░░░ │
+          │ p99: ${LATENCY_P99}ms ████████████░░░░░░ │
+          └─────────────────────────────────────┘
+          
+          Resource Utilization:
+          ┌─────────────────────────────────────┐
+          │ CPU:    ${CPU_USAGE}% ████░░░░░░░░░░░░░░ │
+          │ Memory: ${MEMORY_USAGE}MB ██████░░░░░░░░░░ │
+          └─────────────────────────────────────┘
+          ```
+          
+          ### 🔗 Links
+          
+          - **Build Run**: https://github.com/${{ github.repository }}/actions/runs/${{ inputs.build_run_id }}
+          - **Source Commit**: [`${{ steps.verify.outputs.commit_sha }}`](https://github.com/${{ github.repository }}/commit/${{ steps.verify.outputs.commit_sha }})
+          - **Release Branch**: [`${{ steps.version.outputs.branch_name }}`](https://github.com/${{ github.repository }}/tree/${{ steps.version.outputs.branch_name }})
+          
+          ### 📝 Full Benchmark Data
+          
+          <details>
+          <summary>Click to expand full benchmark JSON</summary>
+          
+          \`\`\`json
+          $(cat ./benchmarks/benchmark-results.json | jq '.')
+          \`\`\`
+          
+          </details>
+          EOF
+          
+          echo "✅ Release notes generated"
+
+      - name: Create Pull Request
+        id: create_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "📝 Creating Pull Request..."
+          
+          PR_BODY="## Release v${{ steps.version.outputs.new_version }}
+
+          This PR prepares the release of version **v${{ steps.version.outputs.new_version }}**.
+
+          ### Changes
+          - ✅ Version bumped from \`$(git show origin/main:VERSION | tr -d '[:space:]')\` to \`${{ steps.version.outputs.new_version }}\`
+          - 🐳 Container image tagged and pushed: \`v${{ steps.version.outputs.new_version }}\`
+
+          ### Build Information
+          - **Build Run**: https://github.com/${{ github.repository }}/actions/runs/${{ inputs.build_run_id }}
+          - **Source Commit**: \`${{ steps.verify.outputs.commit_sha }}\`
+
+          ### Review Checklist
+          - [ ] Version number is correct
+          - [ ] All tests passed in the build run
+          - [ ] Release notes are accurate
+          
+          ---
+          *This PR was automatically created by the Release workflow.*"
+          
+          PR_URL=$(gh pr create \
+            --base main \
+            --head ${{ steps.version.outputs.branch_name }} \
+            --title "Release v${{ steps.version.outputs.new_version }}" \
+            --body "$PR_BODY")
+          
+          echo "✅ Pull Request created: $PR_URL"
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🎉 Creating GitHub Release..."
+          
+          gh release create "v${{ steps.version.outputs.new_version }}" \
+            --title "Release v${{ steps.version.outputs.new_version }}" \
+            --notes-file release-notes.md \
+            --target ${{ steps.version.outputs.branch_name }} \
+            --draft \
+            ./benchmarks/benchmark-results.json#"Benchmark Results"
+          
+          echo "✅ Draft release created for v${{ steps.version.outputs.new_version }}"
+          echo "📝 Release is in DRAFT mode - review and publish manually"
+
+      - name: Update workflow summary
+        run: |
+          echo "## ✅ Release Workflow Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎉 Release v${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pull Request**: ${{ steps.create_pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Release**: [v${{ steps.version.outputs.new_version }}](https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.new_version }}) (Draft)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Quick Benchmark Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          BENCHMARK_JSON=$(cat ./benchmarks/benchmark-results.json)
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Size | $(echo "$BENCHMARK_JSON" | jq -r '.image_info.size_mb // "N/A"') MB |" >> $GITHUB_STEP_SUMMARY
+          echo "| Startup Time | $(echo "$BENCHMARK_JSON" | jq -r '.benchmarks.container_startup_time_ms // "N/A"') ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| Throughput | $(echo "$BENCHMARK_JSON" | jq -r '.performance_metrics.throughput_requests_per_second // "N/A"') req/s |" >> $GITHUB_STEP_SUMMARY
+          echo "| Latency (p95) | $(echo "$BENCHMARK_JSON" | jq -r '.performance_metrics.latency_p95_ms // "N/A"') ms |" >> $GITHUB_STEP_SUMMARY
