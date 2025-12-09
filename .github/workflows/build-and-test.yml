@@ -3,10 +3,6 @@ name: Build and Test
 run-name: "Build and Test: ${{ github.run_id }}"
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 env:
