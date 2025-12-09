@@ -124,7 +124,7 @@ jobs:
             echo "Possible solutions:"
             echo "  1. If this is a retry, delete the existing branch first:"
             echo "     git push origin --delete ${{ steps.version.outputs.branch_name }}"
-            echo "  2. If you need a new version, update the VERSION file in main branch"
+            echo "  2. If you need a new version, update the VERSION file in release branch"
             echo "  3. Check existing releases: https://github.com/${{ github.repository }}/branches"
             echo ""
             exit 1
@@ -196,7 +196,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          echo "📥 Downloading benchmark artifacts from run ${{ inputs.build_run_id }}..."
+          echo " Downloading benchmark artifacts from run ${{ inputs.build_run_id }}..."
           
           # Download artifacts from the specified run
           gh run download ${{ inputs.build_run_id }} -n benchmark-results -D ./benchmarks
@@ -226,15 +226,18 @@ jobs:
           LATENCY_P95=$(echo "$BENCHMARK_JSON" | jq -r '.performance_metrics.latency_p95_ms // "N/A"')
           LATENCY_P99=$(echo "$BENCHMARK_JSON" | jq -r '.performance_metrics.latency_p99_ms // "N/A"')
           
-          # Create release notes
-          cat > release-notes.md << 'EOF'
+          # Get lowercase image name
+          IMAGE_NAME_LOWER=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          
+          # Create release notes with actual values expanded
+          cat > release-notes.md << EOF
           ## 🎉 Release v${{ steps.version.outputs.new_version }}
           
           ### 📦 Container Image
           
-          ```
-          docker pull ghcr.io/$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]'):v${{ steps.version.outputs.new_version }}
-          ```
+          \`\`\`bash
+          docker pull ghcr.io/${IMAGE_NAME_LOWER}:v${{ steps.version.outputs.new_version }}
+          \`\`\`
           
           ### 📊 Performance Benchmarks
           
@@ -261,9 +264,9 @@ jobs:
           
           ### 📈 Benchmark Visualization
           
-          ```
+          \`\`\`
           Performance Overview:
-          ┌────────────────────────────────────┐
+          ┌─────────────────────────────────────┐
           │ Latency Distribution                │
           ├─────────────────────────────────────┤
           │ p50: ${LATENCY_P50}ms ████░░░░░░░░░░░░░░░ │
@@ -274,15 +277,15 @@ jobs:
           Resource Utilization:
           ┌─────────────────────────────────────┐
           │ CPU:    ${CPU_USAGE}% ████░░░░░░░░░░░░░░ │
-          │ Memory: ${MEMORY_USAGE}MB █████░░░░░░░░░░ │
+          │ Memory: ${MEMORY_USAGE}MB ██████░░░░░░░░░░ │
           └─────────────────────────────────────┘
-          ```
+          \`\`\`
           
           ### 🔗 Links
           
           - **Build Run**: https://github.com/${{ github.repository }}/actions/runs/${{ inputs.build_run_id }}
-          - **Source Commit**: [`${{ steps.verify.outputs.commit_sha }}`](https://github.com/${{ github.repository }}/commit/${{ steps.verify.outputs.commit_sha }})
-          - **Release Branch**: [`${{ steps.version.outputs.branch_name }}`](https://github.com/${{ github.repository }}/tree/${{ steps.version.outputs.branch_name }})
+          - **Source Commit**: [\`${{ steps.verify.outputs.commit_sha }}\`](https://github.com/${{ github.repository }}/commit/${{ steps.verify.outputs.commit_sha }})
+          - **Release Branch**: [\`${{ steps.version.outputs.branch_name }}\`](https://github.com/${{ github.repository }}/tree/${{ steps.version.outputs.branch_name }})
           
           ### 📝 Full Benchmark Data
           
@@ -301,7 +304,7 @@ jobs:
       - name: Create Pull Request
         id: create_pr
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           echo "📝 Creating Pull Request..."
           
@@ -319,8 +322,7 @@ jobs:
 
           ### Review Checklist
           - [ ] Version number is correct
-          - [ ] All tests passed in the build run
-          - [ ] Release notes are accurate
+          - [ ] Draft release is created, and release notes are correct. (Publish the release when you merge this PR)
           
           ---
           *This PR was automatically created by the Release workflow.*"
