@@ -1,6 +1,6 @@
 name: Release Workflow
 
-run-name: "Release: v${{ jobs.prepare.outputs.new-version }} (from run ${{ inputs.build_run_id }})"
+run-name: "Release from run ${{ inputs.build_run_id }}"
 
 on:
   workflow_dispatch:
