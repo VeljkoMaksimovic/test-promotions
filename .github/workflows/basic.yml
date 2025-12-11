@@ -1,0 +1,16 @@
+name: Basic Workflow
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  job1:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Hello from job 1"
+
+  job2:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Hello from job 2"
